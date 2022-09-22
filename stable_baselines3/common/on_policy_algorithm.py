@@ -122,7 +122,40 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             **self.policy_kwargs  # pytype:disable=not-instantiable
         )
         self.policy = self.policy.to(self.device)
-
+        
+    # TODO: maxとかaverageとか何がいいかな
+    def _inference_counterfactual_values(self, cf_obs_list: list, prediction_length):
+        """
+        Estimate counterfactual values over the prediction horizon
+        
+        :param cf_obs_list: List of counterfactual observations
+        :param prediction_length: Prediction horizon
+        :return: Counterfactual values that average over the prediction horizon
+        """
+        observations_list = []
+        for pred_step in range(prediction_length):
+                observations: np.ndarray = np.zeros((self.n_envs, self.observation_space.shape[0]))
+                
+                for idx in range(self.n_envs):
+                    # num of envs
+                    observations[idx] = cf_obs_list[idx][pred_step]                    
+                observations_list.append(observations)
+            
+        # inference counterfactual values over counterfactual horizon
+        sum_cf_values = th.zeros(self.n_envs, 1)
+        # max_cf_values = th.zeros(self.n_envs, 1)
+        for observations in observations_list:
+            with th.no_grad():
+                cf_observations_tensor = obs_as_tensor(observations, self.device)
+                counterfactual_values = self.policy.predict_values(cf_observations_tensor)
+                sum_cf_values += counterfactual_values
+                # max_cf_values = th.max(max_cf_values, counterfactual_values)
+        
+        cf_values = sum_cf_values / prediction_length 
+        # cf_values = max_cf_values
+        
+        return cf_values
+        
     def collect_rollouts(
         self,
         env: VecEnv,
@@ -202,40 +235,38 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                     rewards[idx] += self.gamma * terminal_value
                     
             # Inference values for counterfactual observation
-            # TODO: infosはlast infosに変える -> というか，last cf obsをバッファしておく
-            observations_list = [] # (prediction_length, batch_size, obs_dim)
+            # TODO: inference_counterfactual_valuesではself.predict_valuesを用いてinferenceしている
+            # originalでbaselineとして使うvaluesはself.policyを用いていて，これが微妙に出力する値がことなる
+            # また，last_obsを用いているが，new_obsを用いるべき？よくわからないので，とりあえず放置
             prediction_length = infos[0]['prediction_length']
-            for pred_step in range(prediction_length):
-                observations: np.ndarray = np.zeros((new_obs.shape))
-                
-                for idx in range(len(infos)):
-                    # num of envs
-                    observations[idx] = infos[idx]['counterfactual_observation_list'][pred_step]                    
-                observations_list.append(observations)
+            cf_obs_list = []
+            for idx in range(len(infos)):
+                cf_obs_list.append(infos[idx]['counterfactual_observation_list'])
             
-            # inference values over counterfactual horizon
-            counterfacutual_value_list = [] # (prediction_length, num_envs)
-            sum_cf_values = th.zeros(values.shape)
-            for observations in observations_list:
-                with th.no_grad():
-                    cf_observations_tensor = obs_as_tensor(observations, self.device)
-                    counterfactual_values = self.policy.predict_values(cf_observations_tensor)
-                    sum_cf_values += counterfactual_values
-            
-            ave_cf_values = sum_cf_values / prediction_length 
-            
-            print('cf_values', ave_cf_values)
-            print('values', values)
+            if self._last_cf_obs_list is not None:
+                cf_values = self._inference_counterfactual_values(self._last_cf_obs_list, prediction_length)
+            else:
+                cf_values = values
 
-            rollout_buffer.add(self._last_obs, actions, rewards, self._last_episode_starts, values, log_probs)
+            # original
+            # rollout_buffer.add(self._last_obs, actions, rewards, self._last_episode_starts, values, log_probs)
+            # counterfactual baseline
+            rollout_buffer.add(self._last_obs, actions, rewards, self._last_episode_starts, cf_values , log_probs)
+            
             self._last_obs = new_obs
+            self._last_cf_obs_list = cf_obs_list
             self._last_episode_starts = dones
 
-        with th.no_grad():
-            # Compute value for the last timestep
-            values = self.policy.predict_values(obs_as_tensor(new_obs, self.device))
-
-        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
+        # Original
+        # with th.no_grad():
+        #     # Compute value for the last timestep
+        #     values = self.policy.predict_values(obs_as_tensor(new_obs, self.device))        
+        # rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
+        
+        # counterfactual baseline
+        # TODO: これがいいのかイマイチわからない
+        cf_values = self._inference_counterfactual_values(cf_obs_list, prediction_length)
+        rollout_buffer.compute_returns_and_advantage(last_values=cf_values, dones=dones)
 
         callback.on_rollout_end()
 
