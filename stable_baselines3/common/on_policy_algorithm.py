@@ -200,6 +200,32 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                     with th.no_grad():
                         terminal_value = self.policy.predict_values(terminal_obs)[0]
                     rewards[idx] += self.gamma * terminal_value
+                    
+            # Inference values for counterfactual observation
+            # TODO: infosはlast infosに変える -> というか，last cf obsをバッファしておく
+            observations_list = [] # (prediction_length, batch_size, obs_dim)
+            prediction_length = infos[0]['prediction_length']
+            for pred_step in range(prediction_length):
+                observations: np.ndarray = np.zeros((new_obs.shape))
+                
+                for idx in range(len(infos)):
+                    # num of envs
+                    observations[idx] = infos[idx]['counterfactual_observation_list'][pred_step]                    
+                observations_list.append(observations)
+            
+            # inference values over counterfactual horizon
+            counterfacutual_value_list = [] # (prediction_length, num_envs)
+            sum_cf_values = th.zeros(values.shape)
+            for observations in observations_list:
+                with th.no_grad():
+                    cf_observations_tensor = obs_as_tensor(observations, self.device)
+                    counterfactual_values = self.policy.predict_values(cf_observations_tensor)
+                    sum_cf_values += counterfactual_values
+            
+            ave_cf_values = sum_cf_values / prediction_length 
+            
+            print('cf_values', ave_cf_values)
+            print('values', values)
 
             rollout_buffer.add(self._last_obs, actions, rewards, self._last_episode_starts, values, log_probs)
             self._last_obs = new_obs
