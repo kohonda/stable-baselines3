@@ -247,8 +247,6 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                     cf_obs_list.append(infos[idx]['counterfactual_observation_list'])
                 
                 cf_values = self._inference_counterfactual_values(cf_obs_list, prediction_length)
-                print('cf_values', cf_values)
-                print('values', values)
                 # if self._last_cf_obs_list is not None:
                 #     cf_values = self._inference_counterfactual_values(self._last_cf_obs_list, prediction_length)
                 # else:
