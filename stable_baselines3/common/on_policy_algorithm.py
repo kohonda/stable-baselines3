@@ -142,17 +142,17 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                 observations_list.append(observations)
             
         # inference counterfactual values over counterfactual horizon
-        sum_cf_values = th.zeros(self.n_envs, 1)
-        # max_cf_values = th.zeros(self.n_envs, 1)
+        # sum_cf_values = th.zeros(self.n_envs, 1)
+        max_cf_values = th.zeros(self.n_envs, 1)
         for observations in observations_list:
             with th.no_grad():
                 cf_observations_tensor = obs_as_tensor(observations, self.device)
                 counterfactual_values = self.policy.predict_values(cf_observations_tensor)
-                sum_cf_values += counterfactual_values
-                # max_cf_values = th.max(max_cf_values, counterfactual_values)
+                # sum_cf_values += counterfactual_values
+                max_cf_values = th.max(max_cf_values, counterfactual_values)
         
-        cf_values = sum_cf_values / prediction_length 
-        # cf_values = max_cf_values
+        # cf_values = sum_cf_values / prediction_length 
+        cf_values = max_cf_values
         
         return cf_values
         
